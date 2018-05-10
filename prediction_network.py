@@ -88,7 +88,7 @@ class MPNN(nn.Module):
 						message = self.message_relu(self.message_linear(x_list[j]+edge_list[min(i,j)][max(i,j)]))
 						m_flag=1
 					else:
-						message = message + self.message_relu(self.message_linear(x_list[j]+edge_list[torch.min(i,j)][torch.max(i,j)]))
+						message = message + self.message_relu(self.message_linear(x_list[j]+edge_list[min(i,j)][max(i,j)]))
 			message_list.append(message)
 
 		out_list = []
