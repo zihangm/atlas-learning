@@ -198,10 +198,20 @@ def train_cur_data(cur_epoch, datapart, train_dir, labels_dir, output_dir, net, 
 	labels_list = [[] for i in range(args.group_size)]
 	for i in range(args.group_size):
 		for j in range(args.group_size):
-			if i == j:
+			if i == j or (i==3 and j==4) or (i==4 and j==3):
 				labels_list[i].append(0)
 			else:
-				labels_list[i].append(torch.load(labels_dir+'%02d_%02d.pth.tar'%(i, j)))
+				labels_list[i].append(
+					torch.clamp(torch.load(labels_dir + '%d_to_%d.pth.tar' % (i, j)), -args.patch_size,
+					            args.patch_size))
+
+			# if i==0 and j==1:
+			# 	labels_list[i].append(torch.clamp(torch.load(labels_dir + '%d_to_%d.pth.tar' % (i, j)), -args.patch_size, args.patch_size))
+			# 	print "label_max_value:", torch.max(labels_list[0][1])
+			# 	print "label_min_value:", torch.min(labels_list[0][1])
+			# 	print "label_mean_value:", torch.mean(labels_list[0][1])
+			# else:
+			# 	labels_list[i].append(0)
 
 	input_batch_list = []
 	for i in range(args.group_size):
@@ -210,7 +220,8 @@ def train_cur_data(cur_epoch, datapart, train_dir, labels_dir, output_dir, net, 
 	label_batch_list = [[]for i in range(args.group_size)]
 	for i in range(args.group_size):
 		for j in range(args.group_size):
-			label_batch_list[i].append(torch.zeros(args.batch_size, 3, args.patch_size, args.patch_size, args.patch_size).cuda())
+			label_batch_list[i].append(torch.zeros(args.batch_size, 3, args.patch_size, args.patch_size, args.patch_size,
+			                                       requires_grad=False).cuda())
 
 
 	dataset_size = appear_trainset_list[0].size()
@@ -218,13 +229,27 @@ def train_cur_data(cur_epoch, datapart, train_dir, labels_dir, output_dir, net, 
 	flat_idx = util.calculatePatchIdx3D(dataset_size[0], args.patch_size*torch.ones(3), dataset_size[1:], args.stride*torch.ones(3));
 	flat_idx_select = torch.zeros(flat_idx.size());
 
+#read the mask
+	# mask_list = [[] for i in range(args.group_size)]
+	# for i in range(args.group_size):
+	# 	for j in range(args.group_size):
+	# 		if i != j:
+	# 			f = open("training_dataset/mask/"+str(i)+"_to_"+str(j)+".txt")
+	# 			mask=[]
+	# 			for line in f.readlines():
+	# 				mask.append(int(line))
+	# 			mask_list[i].append(mask)
+	# 		else:
+	# 			mask.list[i].append(0)
+
+
 	for patch_idx in range(1, flat_idx.size()[0]):
 		patch_pos = util.idx2pos_4D(flat_idx[patch_idx], dataset_size[1:])
 		patch_list=[]
 		for i in range(args.group_size):
 			patch_list.append(appear_trainset_list[i][patch_pos[0], patch_pos[1]:patch_pos[1]+args.patch_size, patch_pos[2]:patch_pos[2]+args.patch_size, patch_pos[3]:patch_pos[3]+args.patch_size])
 		if (torch.sum(torch.cat(patch_list, 0))!= 0):
-			flat_idx_select[patch_idx] = 1; 
+			flat_idx_select[patch_idx] = 1;
 	
 	flat_idx_select = flat_idx_select.byte();
 
@@ -232,17 +257,22 @@ def train_cur_data(cur_epoch, datapart, train_dir, labels_dir, output_dir, net, 
 	N = flat_idx.size()[0] / args.batch_size;
 
 	t = timeit.default_timer()
+
 	for iters in range(0, N):
-		#train_idx = (torch.rand(args.batch_size).double() * N * args.batch_size)
-		train_idx = torch.arange(iters*args.batch_size, (iters+1)*args.batch_size)
+		train_idx = (torch.rand(args.batch_size).double() * (N * args.batch_size-1))
+		#train_idx = torch.arange(iters*args.batch_size, (iters+1)*args.batch_size)
 		train_idx = torch.floor(train_idx).long()
 		for slices in range(0, args.batch_size):
 			patch_pos = util.idx2pos_4D(flat_idx[train_idx[slices]], dataset_size[1:])
 			for i in range(args.group_size):
 				input_batch_list[i][slices,0] =  appear_trainset_list[i][patch_pos[0], patch_pos[1]:patch_pos[1]+args.patch_size, patch_pos[2]:patch_pos[2]+args.patch_size, patch_pos[3]:patch_pos[3]+args.patch_size].cuda()
 				for j in range(args.group_size):
-					if i != j:
-						label_batch_list[i][j][slices] = labels_list[i][j][train_idx[slices]]
+					if i != j and (i != 3 or j != 4) and (i != 4 or j != 3) :
+						label_batch_list[i][j][slices] = labels_list[i][j][train_idx[slices]].view([3,args.patch_size,
+						                                                                            args.patch_size,args.patch_size])
+
+				# if i==0:
+				# 	label_batch_list[0][1][slices] = labels_list[0][1][train_idx[slices]]
 
 				#nii_img = nib.Nifti1Image(input_batch_list[i][slices,0].cpu().data.numpy(), np.eye(4))
 				#nii_img.to_filename('./tmp/%d/%02d_%02d.nii' %(i,iters, slices))
@@ -258,7 +288,7 @@ def train_cur_data(cur_epoch, datapart, train_dir, labels_dir, output_dir, net, 
 		#construct flow among images
 		for i in range(args.group_size):
 			for j in range(args.group_size):
-				if i != j:
+				if i != j and (i != 3 or j != 4) and (i != 4 or j != 3):
 					flow_0A_x = Round.apply(args.patch_size*args.patch_size*args.patch_size * x_list[i].view(-1, args.patch_size*args.patch_size*args.patch_size, 1))
 					flow_A1_x = Round.apply(args.patch_size*args.patch_size*args.patch_size * x_inv_list[j].view(-1, args.patch_size*args.patch_size*args.patch_size, 1))
 					flow_0A_x = Clamp.apply(flow_0A_x, 0, args.patch_size*args.patch_size*args.patch_size-1)
@@ -278,10 +308,15 @@ def train_cur_data(cur_epoch, datapart, train_dir, labels_dir, output_dir, net, 
 					flow_01_est_z = Flow_mul.apply(flow_0A_z, flow_A1_z)
 
 					flow_01_est = torch.cat([flow_01_est_x, flow_01_est_y, flow_01_est_z], dim=1)
+					for k in range(args.batch_size):
+						if torch.sum(label_batch_list[i][j][k]) == 0:
+							label_batch_list[i][j][k] = flow_01_est[k]
+					label_batch_list[i][j] = Variable(label_batch_list[i][j], requires_grad=False)
+
 					if i==0 and j==1:
-						loss = criterion(flow_01_est,label_batch_list[i][i])
+						loss = criterion(flow_01_est,label_batch_list[i][j])
 					else:
-						loss = loss + criterion(flow_01_est, label_batch_list[i][i])
+						loss = loss + criterion(flow_01_est, label_batch_list[i][j])
 		loss.backward(retain_graph=True)
 		loss_value = loss.data.item()
 		optimizer.step()
